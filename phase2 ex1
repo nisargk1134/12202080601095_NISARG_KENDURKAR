@@ -1,0 +1,81 @@
+import os
+import shutil
+import csv
+import json
+from datetime import datetime
+
+# Base directory
+BASE_DIR = os.getcwd()
+
+# Folder paths
+INCOMING = os.path.join(BASE_DIR, "incoming")
+INPROCESS = os.path.join(BASE_DIR, "inprocess")
+PROCESSED = os.path.join(BASE_DIR, "processed")
+ERRORED = os.path.join(BASE_DIR, "errored")
+GENERATED = os.path.join(BASE_DIR, "generated")
+
+# Get CSV file from incoming
+files = os.listdir(INCOMING)
+
+if not files:
+    print("No file found in incoming folder")
+    exit()
+
+csv_file = files[0]
+
+source_path = os.path.join(INCOMING, csv_file)
+inprocess_path = os.path.join(INPROCESS, csv_file)
+
+try:
+    # Move file to inprocess
+    shutil.move(source_path, inprocess_path)
+
+    # Read CSV
+    with open(inprocess_path, newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        rows = list(reader)
+        headers = reader.fieldnames
+
+    # Modify data
+    for row in rows:
+        # Format BIRTH_DATE
+        birth_date = row.get("BIRTH_DATE", "")
+
+        if birth_date and birth_date.strip() and birth_date != "NULL":
+            date_obj = datetime.strptime(birth_date, "%Y-%m-%d")
+            row["BIRTH_DATE"] = date_obj.strftime("%B %d, %Y")
+        else:
+            row["BIRTH_DATE"] = ""
+
+        # Format ROLES
+        roles_value = row.get("ROLES", "")
+
+        try:
+            if roles_value and roles_value.strip() and roles_value != "NULL":
+                roles_json = json.loads(roles_value)
+                roles_list = [r.get("role", "") for r in roles_json]
+                row["ROLES"] = ", ".join([r for r in roles_list if r])
+            else:
+                row["ROLES"] = ""
+        except:
+            row["ROLES"] = ""
+
+    # Write generated CSV
+    generated_path = os.path.join(GENERATED, csv_file)
+
+    with open(generated_path, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    # Move original file to processed
+    processed_path = os.path.join(PROCESSED, csv_file)
+    shutil.move(inprocess_path, processed_path)
+
+    print("File processed successfully")
+
+except Exception as e:
+    error_path = os.path.join(ERRORED, csv_file)
+    if os.path.exists(inprocess_path):
+        shutil.move(inprocess_path, error_path)
+    print("Error occurred:", e)
