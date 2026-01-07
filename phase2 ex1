@@ -4,17 +4,18 @@ import csv
 import json
 from datetime import datetime
 
-# Base directory
 BASE_DIR = os.getcwd()
 
-# Folder paths
 INCOMING = os.path.join(BASE_DIR, "incoming")
 INPROCESS = os.path.join(BASE_DIR, "inprocess")
 PROCESSED = os.path.join(BASE_DIR, "processed")
 ERRORED = os.path.join(BASE_DIR, "errored")
 GENERATED = os.path.join(BASE_DIR, "generated")
 
-# Get CSV file from incoming
+
+for folder in [INCOMING, INPROCESS, PROCESSED, ERRORED, GENERATED]:
+    os.makedirs(folder, exist_ok=True)
+
 files = os.listdir(INCOMING)
 
 if not files:
@@ -27,18 +28,15 @@ source_path = os.path.join(INCOMING, csv_file)
 inprocess_path = os.path.join(INPROCESS, csv_file)
 
 try:
-    # Move file to inprocess
     shutil.move(source_path, inprocess_path)
 
-    # Read CSV
     with open(inprocess_path, newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
         rows = list(reader)
         headers = reader.fieldnames
 
-    # Modify data
+
     for row in rows:
-        # Format BIRTH_DATE
         birth_date = row.get("BIRTH_DATE", "")
 
         if birth_date and birth_date.strip() and birth_date != "NULL":
@@ -47,7 +45,7 @@ try:
         else:
             row["BIRTH_DATE"] = ""
 
-        # Format ROLES
+
         roles_value = row.get("ROLES", "")
 
         try:
@@ -60,7 +58,6 @@ try:
         except:
             row["ROLES"] = ""
 
-    # Write generated CSV
     generated_path = os.path.join(GENERATED, csv_file)
 
     with open(generated_path, "w", newline="", encoding="utf-8") as file:
@@ -68,7 +65,7 @@ try:
         writer.writeheader()
         writer.writerows(rows)
 
-    # Move original file to processed
+
     processed_path = os.path.join(PROCESSED, csv_file)
     shutil.move(inprocess_path, processed_path)
 
