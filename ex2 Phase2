@@ -1,0 +1,79 @@
+import os
+import csv
+import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+BASE_DIR = os.getcwd()
+
+FOLDERS = [
+    "incoming",
+    "inprocess",
+    "processed",
+    "errored",
+    "generated"
+]
+
+CHUNK_SIZE = 150
+MAX_THREADS = 5
+
+
+def setup_folders():
+    for folder in FOLDERS:
+        os.makedirs(os.path.join(BASE_DIR, folder), exist_ok=True)
+
+
+def write_chunk(chunk_id, headers, rows):
+    try:
+        output_filename = f"generated_chunk_{chunk_id}.csv"
+        output_path = os.path.join(BASE_DIR, "generated", output_filename)
+
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
+
+        return True
+    except Exception as e:
+        print(f"Chunk {chunk_id} failed: {e}")
+        return False
+
+
+def process_csv(filename):
+    incoming_path = os.path.join(BASE_DIR, "incoming", filename)
+    inprocess_path = os.path.join(BASE_DIR, "inprocess", filename)
+
+    # Move file to inprocess
+    shutil.move(incoming_path, inprocess_path)
+
+    try:
+        with open(inprocess_path, newline="", encoding="utf-8") as file:
+            reader = csv.reader(file)
+            headers = next(reader)
+            rows = list(reader)
+
+        # Split rows into chunks of 150
+        chunks = [
+            rows[i:i + CHUNK_SIZE]
+            for i in range(0, len(rows), CHUNK_SIZE)
+        ]
+
+        # Multi-threaded execution
+        futures = []
+        with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+            for idx, chunk in enumerate(chunks):
+                futures.append(
+                    executor.submit(write_chunk, idx, headers, chunk)
+                )
+
+            for future in as_completed(futures):
+                if not future.result():
+                    raise Exception("One or more chunks failed")
+
+        shutil.move(
+            inprocess_path,
+            os.path.join(BASE_DIR, "processed", filename)
+        )
+
+        print(f"SUCCESS: {filename} processed successfully")
+
+    except Exception
