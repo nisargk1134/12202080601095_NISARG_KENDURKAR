@@ -1,144 +1,91 @@
-
-
-
 import os
-import csv
 import shutil
-import mysql.connector # pyright: ignore[reportMissingImports]
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
+from threading import Thread, Lock
 
-
-BASE_DIR = os.getcwd()
+CHUNK_SIZE = 150
+SOURCE_FILE = "SQLSERVER-Person_BusinessEntity-last-20777.csv"
 
 FOLDERS = ["incoming", "inprocess", "processed", "errored", "generated"]
 
-CHUNK_SIZE = 150
-MAX_THREADS = 5
-TABLE_NAME = "person_businessentity"
-
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "password",   # change
-    "database": "testdb"      # change
-}
+lock = Lock()
 
 
-def setup_folders():
+def create_folders():
+    """Create required folders if they don't exist."""
     for folder in FOLDERS:
-        os.makedirs(os.path.join(BASE_DIR, folder), exist_ok=True)
+        os.makedirs(folder, exist_ok=True)
 
 
-def get_db_connection():
-    return mysql.connector.connect(**DB_CONFIG)
-
-def create_table(headers):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    columns = ", ".join([f"`{h}` VARCHAR(255)" for h in headers])
-    sql = f"""
-    CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        {columns}
-    )
-    """
-
-    cursor.execute(sql)
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-def insert_rows(headers, rows):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cols = ", ".join([f"`{h}`" for h in headers])
-    placeholders = ", ".join(["%s"] * len(headers))
-
-    sql = f"INSERT INTO {TABLE_NAME} ({cols}) VALUES ({placeholders})"
-    cursor.executemany(sql, rows)
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-def process_chunk(chunk_id, headers, rows):
-    # 1. Write CSV
-    csv_path = os.path.join(
-        BASE_DIR, "generated", f"generated_chunk_{chunk_id}.csv"
-    )
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(headers)
-        writer.writerows(rows)
-
-
-    insert_rows(headers, rows)
-
-
-def process_csv(filename):
-    incoming_path = os.path.join(BASE_DIR, "incoming", filename)
-    inprocess_path = os.path.join(BASE_DIR, "inprocess", filename)
-
-    if not os.path.exists(incoming_path):
-        return
-
-    shutil.move(incoming_path, inprocess_path)
-
+def save_chunk(df_chunk, chunk_index):
+    """Save a chunk of DataFrame to a CSV file in the generated folder."""
     try:
-        with open(inprocess_path, newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            headers = next(reader)
-            rows = list(reader)
+        filename = f"generated/chunk_{chunk_index + 1}.csv"
+        df_chunk.to_csv(filename, index=False)
+        with lock:
+            print(f"Generated {filename}")
+    except Exception as e:
+        with lock:
+            print(f"Failed to save chunk {chunk_index + 1}: {e}")
 
-   
-        create_table(headers)
 
-       
-        chunks = [
-            rows[i:i + CHUNK_SIZE]
-            for i in range(0, len(rows), CHUNK_SIZE)
-        ]
+def process_chunks(df, start_index, end_index):
+    """Thread worker to process a subset of chunks."""
+    for i in range(start_index, end_index):
+        chunk = df.iloc[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
+        if not chunk.empty:
+            save_chunk(chunk, i)
 
-       
-        with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-            futures = [
-                executor.submit(process_chunk, idx, headers, chunk)
-                for idx, chunk in enumerate(chunks)
-            ]
 
-            for future in as_completed(futures):
-                future.result()  
+def main():
+    try:
+        create_folders()
 
-       
-        shutil.move(
-            inprocess_path,
-            os.path.join(BASE_DIR, "processed", filename)
-        )
+        
+        incoming_path = os.path.join("incoming", os.path.basename(SOURCE_FILE))
+        shutil.copy(SOURCE_FILE, incoming_path)
+        print(f"File copied to incoming folder: {incoming_path}")
 
-        print(f"SUCCESS: {filename} processed")
+        
+        inprocess_path = os.path.join("inprocess", os.path.basename(SOURCE_FILE))
+        shutil.move(incoming_path, inprocess_path)
+        print(f"File moved to inprocess folder: {inprocess_path}")
+
+    
+        df = pd.read_csv(inprocess_path)
+        total_records = len(df)
+        total_chunks = (total_records + CHUNK_SIZE - 1) // CHUNK_SIZE
+        print(f"Total records: {total_records}, Total chunks: {total_chunks}")
+
+        
+        num_threads = 4
+        chunks_per_thread = (total_chunks + num_threads - 1) // num_threads
+
+        threads = []
+        for t in range(num_threads):
+            start_idx = t * chunks_per_thread
+            end_idx = min(start_idx + chunks_per_thread, total_chunks)
+            thread = Thread(target=process_chunks, args=(df, start_idx, end_idx))
+            threads.append(thread)
+            thread.start()
+
+        
+        for thread in threads:
+            thread.join()
+
+        
+        processed_path = os.path.join("processed", os.path.basename(SOURCE_FILE))
+        shutil.move(inprocess_path, processed_path)
+        print(f"File processing completed. Moved to processed folder: {processed_path}")
 
     except Exception as e:
-        print(f"ERROR: {filename} failed -> {e}")
-
+       
+        errored_path = os.path.join("errored", os.path.basename(SOURCE_FILE))
         if os.path.exists(inprocess_path):
-            shutil.move(
-                inprocess_path,
-                os.path.join(BASE_DIR, "errored", filename)
-            )
+            shutil.move(inprocess_path, errored_path)
+        print(f"Processing failed. File moved to errored folder: {errored_path}")
+        print(f"Error: {e}")
 
 
 if __name__ == "__main__":
-    setup_folders()
-
-    files = [
-        f for f in os.listdir("incoming")
-        if f.lower().endswith(".csv")
-    ]
-
-    for file in files:
-        process_csv(file)
-
+    main()
