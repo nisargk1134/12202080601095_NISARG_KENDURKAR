@@ -6,6 +6,8 @@ from datetime import datetime
 
 BASE_DIR = os.getcwd()
 
+#note = if all file names are deleted then?
+
 INCOMING = os.path.join(BASE_DIR, "incoming")
 INPROCESS = os.path.join(BASE_DIR, "inprocess")
 PROCESSED = os.path.join(BASE_DIR, "processed")
@@ -22,10 +24,10 @@ if not files:
     print("No file found in incoming folder")
     exit()
 
-csv_file = files[0]
-
-source_path = os.path.join(INCOMING, csv_file)
-inprocess_path = os.path.join(INPROCESS, csv_file)
+# note = if more than 1 file then?
+for csv_file in files:
+    source_path = os.path.join(INCOMING, csv_file)
+    inprocess_path = os.path.join(INPROCESS, csv_file)
 
 try:
     shutil.move(source_path, inprocess_path)
@@ -33,7 +35,15 @@ try:
     with open(inprocess_path, newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
         rows = list(reader)
-        headers = reader.fieldnames
+        headers = reader.fieldnames.copy() if reader.fieldnames else []
+
+
+    if "BIRTH_DATE" not in headers:
+        headers.append("BIRTH_DATE")
+
+    if "ROLES" not in headers:
+        headers.append("ROLES")
+
 
 
     for row in rows:
