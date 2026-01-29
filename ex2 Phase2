@@ -1,90 +1,93 @@
 import os
+import csv
 import shutil
-import pandas as pd
 from threading import Thread, Lock
 
 CHUNK_SIZE = 150
 SOURCE_FILE = "SQLSERVER-Person_BusinessEntity-last-20777.csv"
 
 FOLDERS = ["incoming", "inprocess", "processed", "errored", "generated"]
-
 lock = Lock()
 
 
 def create_folders():
-    """Create required folders if they don't exist."""
     for folder in FOLDERS:
         os.makedirs(folder, exist_ok=True)
 
 
-def save_chunk(df_chunk, chunk_index):
-    """Save a chunk of DataFrame to a CSV file in the generated folder."""
+def read(path):
+    with open(path, newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        rows = list(reader)
+        headers = reader.fieldnames
+    return headers, rows
+
+
+def chunk(headers, rows, chunk_index):
     try:
-        filename = f"generated/chunk_{chunk_index + 1}.csv"
-        df_chunk.to_csv(filename, index=False)
+        filename = "generated/chunk_{chunk_index + 1}.csv"
+        with open(filename, "w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=headers)
+            writer.writeheader(headers)
+            writer.writerows(rows)
+
         with lock:
             print(f"Generated {filename}")
+
     except Exception as e:
         with lock:
             print(f"Failed to save chunk {chunk_index + 1}: {e}")
 
 
-def process_chunks(df, start_index, end_index):
-    """Thread worker to process a subset of chunks."""
+def prochunks(headers, all_rows, start_index, end_index):
     for i in range(start_index, end_index):
-        chunk = df.iloc[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
-        if not chunk.empty:
-            save_chunk(chunk, i)
+        start = i * CHUNK_SIZE
+        end = start + CHUNK_SIZE
+        chunk_rows = all_rows[start:end]
+
+        if chunk_rows:
+            chunk(headers, chunk_rows, i)
 
 
 def main():
     try:
         create_folders()
 
-        
         incoming_path = os.path.join("incoming", os.path.basename(SOURCE_FILE))
         shutil.copy(SOURCE_FILE, incoming_path)
-        print(f"File copied to incoming folder: {incoming_path}")
 
-        
         inprocess_path = os.path.join("inprocess", os.path.basename(SOURCE_FILE))
         shutil.move(incoming_path, inprocess_path)
-        print(f"File moved to inprocess folder: {inprocess_path}")
+        headers, rows = read(inprocess_path)
 
-    
-        df = pd.read_csv(inprocess_path)
-        total_records = len(df)
+        total_records = len(rows)
         total_chunks = (total_records + CHUNK_SIZE - 1) // CHUNK_SIZE
+
         print(f"Total records: {total_records}, Total chunks: {total_chunks}")
 
-        
-        num_threads = 4
-        chunks_per_thread = (total_chunks + num_threads - 1) // num_threads
+        numthread = 4
+        chunkspthrd = (total_chunks + numthread - 1) // numthread
 
         threads = []
-        for t in range(num_threads):
-            start_idx = t * chunks_per_thread
-            end_idx = min(start_idx + chunks_per_thread, total_chunks)
-            thread = Thread(target=process_chunks, args=(df, start_idx, end_idx))
+        for t in range(numthread):
+            start_idx = t * chunkspthrd
+            end_idx = min(start_idx + chunkspthrd, total_chunks)
+            thread = Thread(target=prochunks, args=(headers, rows, start_idx, end_idx))
             threads.append(thread)
             thread.start()
 
-        
         for thread in threads:
             thread.join()
 
-        
         processed_path = os.path.join("processed", os.path.basename(SOURCE_FILE))
         shutil.move(inprocess_path, processed_path)
-        print(f"File processing completed. Moved to processed folder: {processed_path}")
+        print("File processing completed. Moved to processed folder.")
 
     except Exception as e:
-       
         errored_path = os.path.join("errored", os.path.basename(SOURCE_FILE))
         if os.path.exists(inprocess_path):
             shutil.move(inprocess_path, errored_path)
-        print(f"Processing failed. File moved to errored folder: {errored_path}")
-        print(f"Error: {e}")
+        print(f"Processing failed: {e}")
 
 
 if __name__ == "__main__":
